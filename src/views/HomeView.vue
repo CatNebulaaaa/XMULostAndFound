@@ -1,150 +1,227 @@
 <template>
-  <div class="home-container">
-    <!-- 1. Hero 搜索区 (保持之前的样式，略微调整) -->
-    <div class="hero-section">
-      <div class="hero-content">
-        <h1 class="main-title">🔎 XMU 校园失物招领中心</h1>
-        
-        <el-card class="search-card" shadow="always">
-          <div class="search-box">
-            <el-input 
-              v-model="queryText" 
-              placeholder="输入关键词（如：黑色书包）..." 
-              class="search-input" size="large" clearable @keyup.enter="doSearch"
+  <div class="home-view">
+    <el-card class="search-card">
+      <h1 class="title">🔎 XMU 校园失物招领中心</h1>
+      
+      <el-form @submit.prevent="performSearch" class="search-form">
+        <el-input
+          v-model="searchText"
+          placeholder="请输入物品描述或图片中的文字..."
+          size="large"
+          clearable
+          class="search-input"
+        >
+          <template #prepend>
+            <el-upload
+              ref="uploadRef"
+              :auto-upload="false"
+              :show-file-list="false"
+              @change="handleSearchImageChange"
+              accept="image/*"
             >
-              <template #prefix><el-icon><Search /></el-icon></template>
-            </el-input>
-            
-            <input type="file" ref="fileInput" @change="handleImageSearch" accept="image/*" style="display: none" />
-            
-            <el-button @click="$refs.fileInput.click()" size="large" :type="searchImage ? 'success' : 'default'">
-              <el-icon><Camera /></el-icon> {{ searchImage ? '已选图' : '以图搜图' }}
-            </el-button>
-            
-            <el-button type="primary" size="large" @click="doSearch">搜索</el-button>
-          </div>
-          <!-- 预览图 -->
-          <div v-if="previewUrl" class="img-preview-box">
-             <img :src="previewUrl" />
-             <el-link type="danger" @click="clearImage">清除图片</el-link>
-          </div>
-        </el-card>
-      </div>
-    </div>
+              <el-button type="primary">{{ searchImagePreview ? '已选图' : '以图搜图' }}</el-button>
+            </el-upload>
+          </template>
+          <template #append>
+            <el-button @click="performSearch" type="primary" native-type="submit" :loading="loading">搜索</el-button>
+          </template>
+        </el-input>
+      </el-form>
 
-    <!-- 2. 信息展示广场 (新功能) -->
-    <div class="plaza-section">
-      <!-- 如果是搜索结果模式 -->
-      <div v-if="isSearching" class="results-wrapper">
-        <div class="section-title">
-            <h3>🎯 搜索结果 ({{ results.length }})</h3>
-            <el-button link @click="resetSearch">返回广场</el-button>
-        </div>
-        <ItemGrid :items="results" />
+      <div v-if="searchImagePreview" class="image-preview-container">
+        <el-image :src="searchImagePreview" fit="contain" class="image-preview" />
+        <el-button @click="clearSearchImage" type="danger" link>清除图片</el-button>
       </div>
 
-      <!-- 如果是默认广场模式 -->
-      <div v-else class="tabs-wrapper">
-        <el-tabs v-model="activeTab" class="custom-tabs" @tab-click="fetchInitialData">
-          <el-tab-pane label="👀 最近捡到的 (招领)" name="found">
-            <ItemGrid :items="foundItems" empty-text="暂无招领信息，大家都保管得很好！" />
-          </el-tab-pane>
-          <el-tab-pane label="📢 最近丢失的 (寻物)" name="lost">
-             <ItemGrid :items="lostItems" empty-text="暂无寻物信息，希望大家都没丢东西！" />
-          </el-tab-pane>
-        </el-tabs>
+    </el-card>
+
+    <div class="results-container">
+      <div class="results-header">
+        <h2>🎯 搜索结果 ({{ results.length }})</h2>
+        <el-button v-if="isSearched" @click="fetchAllItems" type="primary" link>返回广场</el-button>
       </div>
+
+      <el-row :gutter="20" v-loading="loading">
+        <el-col :xs="24" :sm="12" :md="8" :lg="6" v-for="item in results" :key="item.id" class="result-col">
+          <el-card shadow="hover" class="result-card">
+            <el-image :src="getImageUrl(item.image_filename)" lazy fit="cover" class="result-image">
+              <template #error>
+                <div class="image-slot">加载失败</div>
+              </template>
+            </el-image>
+            <div class="result-info">
+              <p class="description">{{ item.description }}</p>
+              <p class="location"><b>地点:</b> {{ item.location }}</p>
+              <p class="category"><b>分类:</b> {{ item.category }}</p>
+              <time class="time">{{ new Date(item.timestamp).toLocaleString() }}</time>
+            </div>
+          </el-card>
+        </el-col>
+      </el-row>
+      <el-empty v-if="!loading && results.length === 0" description="暂无物品信息或未找到匹配结果"></el-empty>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
-import axios from 'axios'
-import { Search, Camera } from '@element-plus/icons-vue'
-import ItemGrid from '../components/ItemGrid.vue' // 我们要把列表抽离成组件，下面会写
+import { ref, onMounted } from 'vue';
+import apiClient from '../api'; // 确保 api.js 存在于 src 目录下
 
-const queryText = ref('')
-const searchImage = ref(null)
-const previewUrl = ref(null)
-const results = ref([])
-const isSearching = ref(false)
-const fileInput = ref(null)
+const searchText = ref('');
+const searchImageFile = ref(null);
+const searchImagePreview = ref('');
+const results = ref([]);
+const loading = ref(false);
+const isSearched = ref(false); // 标记是否执行过搜索
+const uploadRef = ref(null);
 
-const activeTab = ref('found')
-const foundItems = ref([])
-const lostItems = ref([])
+const API_BASE_URL = 'https://catnebulaaa-xmulostandfound.hf.space'; // 你的 Space URL
 
-// 初始化加载数据
-const fetchInitialData = async () => {
-  // 这里我们用 search 接口 hack 一下，不传 query，只传 type 即可获取列表
-  // 注意：需要后端支持 filter
-  // 简单起见，我们前端获取全部再筛选，或者后端 filter_items 已支持
+// 获取完整图片 URL
+const getImageUrl = (filename) => {
+  if (!filename) return '';
+  return `${API_BASE_URL}/api/images/${filename}`;
+};
+
+// 获取所有物品（首页加载时）
+const fetchAllItems = async () => {
+  loading.value = true;
+  isSearched.value = false; // 重置搜索标记
   try {
-    const res = await axios.post('https://catnebulaaa-xmulostandfound.hf.space/api/search', new FormData) // 获取全部
-    const all = res.data.results || []
-    
-    // 前端分类
-    foundItems.value = all.filter(i => i.item_type === 'found').slice(0, 12) // 只看最新的12条
-    lostItems.value = all.filter(i => i.item_type === 'lost').slice(0, 12)
-  } catch (e) {
-    console.error(e)
+    const response = await apiClient.get('/items');
+    results.value = response.data.results || [];
+  } catch (error) {
+    console.error('获取物品列表失败:', error);
+    results.value = [];
+  } finally {
+    loading.value = false;
   }
-}
-
-onMounted(() => {
-  fetchInitialData()
-})
-
-// 处理图片搜索
-const handleImageSearch = (e) => {
-  const file = e.target.files[0]
-  if(file) {
-    searchImage.value = file
-    previewUrl.value = URL.createObjectURL(file)
-  }
-}
-const clearImage = () => {
-  searchImage.value = null; previewUrl.value = null; fileInput.value.value = ''
-}
+};
 
 // 执行搜索
-const doSearch = async () => {
-  if(!queryText.value && !searchImage.value) return
-  isSearching.value = true
-  
-  const fd = new FormData()
-  if(queryText.value) fd.append('query_text', queryText.value)
-  if(searchImage.value) fd.append('query_image', searchImage.value)
-  
-  try {
-    const res = await axios.post('https://catnebulaaa-xmulostandfound.hf.space', fd)
-    results.value = res.data.results
-  } catch(e) { console.error(e) }
-}
+const performSearch = async () => {
+  if (!searchText.value && !searchImageFile.value) {
+    // 如果搜索条件为空，则刷新为全部物品
+    await fetchAllItems();
+    return;
+  }
 
-const resetSearch = () => {
-  isSearching.value = false
-  queryText.value = ''
-  clearImage()
-  fetchInitialData()
-}
+  loading.value = true;
+  isSearched.value = true;
+  const formData = new FormData();
+  if (searchText.value) {
+    formData.append('query_text', searchText.value);
+  }
+  if (searchImageFile.value) {
+    formData.append('query_image', searchImageFile.value);
+  }
+
+  try {
+    const response = await apiClient.post('/search', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    results.value = response.data.results || [];
+  } catch (error) {
+    console.error('搜索失败:', error);
+    results.value = [];
+  } finally {
+    loading.value = false;
+  }
+};
+
+// 处理图片选择
+const handleSearchImageChange = (file) => {
+  const rawFile = file.raw;
+  if (rawFile) {
+    searchImageFile.value = rawFile;
+    searchImagePreview.value = URL.createObjectURL(rawFile);
+  }
+};
+
+// 清除选择的图片
+const clearSearchImage = () => {
+  searchImageFile.value = null;
+  searchImagePreview.value = '';
+  if (uploadRef.value) {
+    uploadRef.value.clearFiles();
+  }
+};
+
+// 组件挂载时加载所有物品
+onMounted(() => {
+  fetchAllItems();
+});
 </script>
 
 <style scoped>
-.home-container { background-color: #f5f7fa; min-height: 100vh; }
-.hero-section {
-  background: linear-gradient(120deg, #a1c4fd 0%, #c2e9fb 100%);
-  padding: 40px 20px 60px;
-  text-align: center;
+.home-view {
+  width: 100%;
+  padding: 20px;
 }
-.main-title { color: #2c3e50; margin-bottom: 20px; text-shadow: 0 2px 4px rgba(255,255,255,0.5); }
-.search-card { max-width: 700px; margin: 0 auto; border-radius: 50px; padding: 5px; }
-.search-box { display: flex; gap: 10px; align-items: center; }
-.img-preview-box { margin-top: 10px; display: flex; align-items: center; gap: 10px; justify-content: center;}
-.img-preview-box img { height: 50px; border-radius: 4px; border: 1px solid #ddd; }
-
-.plaza-section { max-width: 1200px; margin: -30px auto 0; position: relative; padding: 0 20px 40px; }
-.section-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
-.tabs-wrapper { background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+.title {
+  text-align: center;
+  margin-bottom: 20px;
+}
+.search-card {
+  margin-bottom: 30px;
+}
+.search-form {
+  max-width: 800px;
+  margin: 0 auto;
+}
+.image-preview-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 15px;
+}
+.image-preview {
+  width: 150px;
+  height: 150px;
+  border: 1px dashed #d9d9d9;
+  border-radius: 6px;
+  margin-bottom: 5px;
+}
+.results-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.result-col {
+  margin-bottom: 20px;
+}
+.result-card .result-image {
+  width: 100%;
+  height: 200px;
+  display: block;
+}
+.result-info {
+  padding: 14px;
+}
+.result-info p {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: #606266;
+}
+.result-info .description {
+  font-weight: bold;
+  color: #303133;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.result-info .time {
+  font-size: 12px;
+  color: #999;
+}
+.image-slot {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  background: #f5f7fa;
+  color: #909399;
+}
 </style>

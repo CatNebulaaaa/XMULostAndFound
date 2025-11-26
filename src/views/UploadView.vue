@@ -1,151 +1,163 @@
 <template>
-  <div class="upload-container">
-    <el-card class="upload-card">
-      <template #header>
-        <div class="card-header">
-          <h2>📝 发布信息</h2>
-          <p>请尽可能详细地描述物品特征</p>
-        </div>
-      </template>
+  <el-card class="upload-card">
+    <h1 class="title">📝 发布信息</h1>
+    <p class="subtitle">请尽可能详细地描述物品特征</p>
 
-      <el-form :model="form" label-position="top" size="large">
-        
-        <!-- 1. 类型选择 (核心新功能) -->
-        <el-form-item label="信息类型">
-          <el-radio-group v-model="form.item_type" fill="#3a7bd5">
-            <el-radio-button label="found">😇 我捡到了 (失物招领)</el-radio-button>
-            <el-radio-button label="lost">😭 我丢了 (寻物启事)</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
+    <el-form ref="formRef" :model="form" label-position="top" class="upload-form">
+      
+      <el-form-item label="信息类型" required>
+        <el-radio-group v-model="form.type">
+          <el-radio-button label="found">😇 我捡到了 (失物招领)</el-radio-button>
+          <el-radio-button label="lost" disabled>😭 我丢了 (寻物启事)</el-radio-button>
+        </el-radio-group>
+      </el-form-item>
 
-        <!-- 2. 图片上传 -->
-        <el-form-item label="上传图片 (AI自动识别特征)">
-          <el-upload
-            action="#"
-            :auto-upload="false"
-            :limit="1"
-            :on-change="handleFileChange"
-            :on-remove="handleRemove"
-            list-type="picture-card"
-            class="upload-area"
-          >
-            <el-icon><Plus /></el-icon>
-          </el-upload>
-        </el-form-item>
+      <el-form-item label="上传图片 (AI自动识别特征)" required>
+        <el-upload
+          action="#"
+          list-type="picture-card"
+          :auto-upload="false"
+          :limit="1"
+          :on-change="handleFileChange"
+          :on-remove="handleFileRemove"
+          accept="image/*"
+        >
+          <el-icon><Plus /></el-icon>
+        </el-upload>
+      </el-form-item>
+      
+      <el-row :gutter="20">
+        <el-col :span="12">
+          <el-form-item label="发生地点" required>
+            <el-select v-model="form.location" placeholder="请选择地点" style="width: 100%;">
+              <el-option label="竞丰食堂" value="竞丰食堂"></el-option>
+              <el-option label="芙蓉食堂" value="芙蓉食堂"></el-option>
+              <el-option label="图书馆" value="图书馆"></el-option>
+              <el-option label="教学楼" value="教学楼"></el-option>
+              <el-option label="其他" value="其他"></el-option>
+            </el-select>
+          </el-form-item>
+        </el-col>
+        <el-col :span="12">
+          <el-form-item label="物品分类" required>
+            <el-select v-model="form.category" placeholder="请选择分类" style="width: 100%;">
+              <el-option label="校园卡/证件" value="校园卡/证件"></el-option>
+              <el-option label="电子产品" value="电子产品"></el-option>
+              <el-option label="雨伞" value="雨伞"></el-option>
+              <el-option label="水杯" value="水杯"></el-option>
+              <el-option label="其他" value="其他"></el-option>
+            </el-select>
+          </el-form-item>
+        </el-col>
+      </el-row>
 
-        <el-row :gutter="20">
-          <el-col :span="12">
-            <!-- 3. 地点选择 (已更新 XMU 专属地点) -->
-            <el-form-item label="发生地点">
-              <el-select v-model="form.location" placeholder="请选择地点" style="width: 100%">
-                <el-option v-for="loc in locations" :key="loc" :label="loc" :value="loc" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <!-- 4. 物品分类 (已更新) -->
-            <el-form-item label="物品分类">
-              <el-select v-model="form.category" placeholder="请选择分类" style="width: 100%">
-                <el-option v-for="cat in categories" :key="cat" :label="cat" :value="cat" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-        </el-row>
+      <el-form-item label="物品描述 (颜色、品牌、特殊痕迹等)" required>
+        <el-input
+          v-model="form.description"
+          type="textarea"
+          :rows="3"
+          placeholder="例如：一个黑色的小米双肩包，上面挂着一个皮卡丘挂件"
+        ></el-input>
+      </el-form-item>
 
-        <el-form-item label="物品描述 (颜色、品牌、特殊痕迹等)">
-          <el-input v-model="form.description" type="textarea" :rows="3" placeholder="例如：在三家村路口捡到的，黑色水杯，上面有哆啦A梦贴纸" />
-        </el-form-item>
+      <el-form-item label="联系方式 (仅展示给搜索到的人)" required>
+         <el-input v-model="form.contact" placeholder="请输入您的 V 或 QQ">
+            <template #prepend>V / QQ</template>
+         </el-input>
+      </el-form-item>
 
-        <el-form-item label="联系方式 (仅展示给搜索到的人)">
-          <el-input v-model="form.contact" placeholder="微信号 / 手机号 (例如: V: xmu123456)" >
-            <template #prefix><el-icon><Message /></el-icon></template>
-          </el-input>
-        </el-form-item>
+      <el-form-item>
+        <el-button @click="submitForm" type="primary" style="width: 100%;" :loading="loading">立即发布</el-button>
+      </el-form-item>
 
-        <el-form-item>
-          <el-button type="primary" class="submit-btn" @click="submitUpload" :loading="loading" round>
-            立即发布
-          </el-button>
-        </el-form-item>
-      </el-form>
-    </el-card>
-  </div>
+    </el-form>
+  </el-card>
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import axios from 'axios'
-import { ElMessage } from 'element-plus'
-import { Plus, Message } from '@element-plus/icons-vue'
-import { useRouter } from 'vue-router'
+import { ref, reactive } from 'vue';
+import { useRouter } from 'vue-router';
+import { ElMessage } from 'element-plus';
+import { Plus } from '@element-plus/icons-vue';
+import apiClient from '../api';
 
-const router = useRouter()
-const loading = ref(false)
-const file = ref(null)
+const router = useRouter();
+const loading = ref(false);
 
-const form = ref({
-  item_type: 'found', // 默认是捡到了
-  description: '',
+const form = reactive({
+  type: 'found',
+  file: null,
   location: '',
   category: '',
-  contact: ''
-})
+  description: '',
+  contact: '',
+});
 
-// 更新后的地点列表
-const locations = [
-  '思源食堂', '竞丰食堂', '丰庭食堂', '国光', '映雪', 
-  '凌云', '学武楼', '文宣楼', '坤銮楼', '一号楼', 
-  '图书馆', '一期操场', '二期操场', '其他区域'
-]
-
-// 更新后的分类列表
-const categories = [
-  '校园卡/证件', '电子产品', '书籍/教材', '雨伞/遮阳伞', 
-  '水杯/日用品', '衣物/鞋帽', '运动器材', '钥匙/门禁卡', '其他'
-]
-
+// 处理文件选择
 const handleFileChange = (uploadFile) => {
-  file.value = uploadFile.raw
-}
-const handleRemove = () => {
-  file.value = null
-}
+  // el-upload 的 on-change 会在添加文件、上传成功和上传失败时都触发
+  // 我们只关心文件被添加的状态
+  if (uploadFile.status === 'ready') {
+    form.file = uploadFile.raw;
+  }
+};
 
-const submitUpload = async () => {
-  if (!file.value) return ElMessage.warning("为了提高匹配率，请务必上传一张图片")
-  if (!form.value.description) return ElMessage.warning("请填写描述")
+// 处理文件移除
+const handleFileRemove = () => {
+  form.file = null;
+};
+
+const submitForm = async () => {
+  if (!form.file || !form.location || !form.category || !form.description || !form.contact) {
+    ElMessage.error('请填写所有必填项并上传图片！');
+    return;
+  }
   
-  loading.value = true
-  const formData = new FormData()
-  formData.append('file', file.value)
-  formData.append('description', form.value.description)
-  formData.append('location', form.value.location)
-  formData.append('category', form.value.category)
-  formData.append('item_type', form.value.item_type)
-  formData.append('contact', form.value.contact)
+  loading.value = true;
+  
+  const formData = new FormData();
+  // 注意：后端的 add_item 方法没有接收 contact 字段，这里我们先将其合并到 description 中
+  const fullDescription = `${form.description} [联系方式: ${form.contact}]`;
+
+  formData.append('file', form.file);
+  formData.append('location', form.location);
+  formData.append('category', form.category);
+  formData.append('description', fullDescription);
 
   try {
-    await axios.post('https://catnebulaaa-xmulostandfound.hf.space', formData)
-    ElMessage.success('发布成功！')
-    // 发布成功后跳转回首页
-    setTimeout(() => router.push('/'), 1000)
-  } catch (e) {
-    ElMessage.error('发布失败：' + e.message)
+    await apiClient.post('/items', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    
+    ElMessage.success('发布成功！');
+    router.push('/'); // 发布成功后跳转回主页
+  } catch (error) {
+    console.error('发布失败:', error);
+    const errorMsg = error.response?.data?.detail || error.message || '未知错误';
+    ElMessage.error(`发布失败: ${errorMsg}`);
   } finally {
-    loading.value = false
+    loading.value = false;
   }
-}
+};
 </script>
 
 <style scoped>
-.upload-container {
-  max-width: 800px;
-  margin: 20px auto;
-}
 .upload-card {
-  border-radius: 12px;
+  max-width: 800px;
+  margin: 40px auto;
+  padding: 20px;
 }
-.card-header h2 { margin: 0; color: #333; }
-.card-header p { margin: 5px 0 0; color: #999; font-size: 14px; }
-.submit-btn { width: 100%; font-weight: bold; font-size: 16px; padding: 22px 0; }
+.title {
+  text-align: center;
+}
+.subtitle {
+  text-align: center;
+  color: #909399;
+  margin-bottom: 30px;
+}
+.upload-form {
+  margin-top: 20px;
+}
 </style>
