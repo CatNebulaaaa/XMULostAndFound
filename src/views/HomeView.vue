@@ -88,7 +88,7 @@ const fetchAllItems = async () => {
   loading.value = true;
   isSearched.value = false; // 重置搜索标记
   try {
-    const response = await apiClient.get('/items');
+    const response = await apiClient.get('/api/items');
     results.value = response.data.results || [];
   } catch (error) {
     console.error('获取物品列表失败:', error);
@@ -117,7 +117,7 @@ const performSearch = async () => {
   }
 
   try {
-    const response = await apiClient.post('/search', formData, {
+    const response = await apiClient.post('/api/search', formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     });
     results.value = response.data.results || [];
