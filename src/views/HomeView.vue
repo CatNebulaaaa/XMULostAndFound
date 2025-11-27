@@ -1,227 +1,194 @@
+<!-- frontend/src/views/HomeView.vue -->
 <template>
-  <div class="home-view">
-    <el-card class="search-card">
-      <h1 class="title">🔎 XMU 校园失物招领中心</h1>
+  <div class="home-container">
+    
+    <!-- 1. 蓝色 Banner 区域 -->
+    <div class="banner-section">
+      <h1 class="main-title">🔎 XMU 校园失物招领中心</h1>
       
-      <el-form @submit.prevent="performSearch" class="search-form">
+      <!-- 搜索框卡片 -->
+      <div class="search-box-card">
         <el-input
           v-model="searchText"
-          placeholder="请输入物品描述或图片中的文字..."
+          placeholder="输入关键词（如：黑色书包）..."
           size="large"
-          clearable
-          class="search-input"
+          class="custom-search-input"
+          @keyup.enter="performSearch"
         >
-          <template #prepend>
-            <el-upload
-              ref="uploadRef"
-              :auto-upload="false"
-              :show-file-list="false"
-              @change="handleSearchImageChange"
-              accept="image/*"
-            >
-              <el-button type="primary">{{ searchImagePreview ? '已选图' : '以图搜图' }}</el-button>
-            </el-upload>
-          </template>
-          <template #append>
-            <el-button @click="performSearch" type="primary" native-type="submit" :loading="loading">搜索</el-button>
+          <template #suffix>
+            <div class="search-actions">
+              <el-upload
+                :auto-upload="false"
+                :show-file-list="false"
+                @change="handleImageSearch"
+                accept="image/*"
+                class="upload-icon-btn"
+              >
+                <el-button link>
+                  <el-icon><Camera /></el-icon> {{ searchImagePreview ? '已选图' : '以图搜图' }}
+                </el-button>
+              </el-upload>
+              <el-button type="primary" @click="performSearch" :loading="loading">搜索</el-button>
+            </div>
           </template>
         </el-input>
-      </el-form>
-
-      <div v-if="searchImagePreview" class="image-preview-container">
-        <el-image :src="searchImagePreview" fit="contain" class="image-preview" />
-        <el-button @click="clearSearchImage" type="danger" link>清除图片</el-button>
       </div>
-
-    </el-card>
-
-    <div class="results-container">
-      <div class="results-header">
-        <h2>🎯 搜索结果 ({{ results.length }})</h2>
-        <el-button v-if="isSearched" @click="fetchAllItems" type="primary" link>返回广场</el-button>
-      </div>
-
-      <el-row :gutter="20" v-loading="loading">
-        <el-col :xs="24" :sm="12" :md="8" :lg="6" v-for="item in results" :key="item.id" class="result-col">
-          <el-card shadow="hover" class="result-card">
-            <el-image :src="getImageUrl(item.image_filename)" lazy fit="cover" class="result-image">
-              <template #error>
-                <div class="image-slot">加载失败</div>
-              </template>
-            </el-image>
-            <div class="result-info">
-              <p class="description">{{ item.description }}</p>
-              <p class="location"><b>地点:</b> {{ item.location }}</p>
-              <p class="category"><b>分类:</b> {{ item.category }}</p>
-              <time class="time">{{ new Date(item.timestamp).toLocaleString() }}</time>
-            </div>
-          </el-card>
-        </el-col>
-      </el-row>
-      <el-empty v-if="!loading && results.length === 0" description="暂无物品信息或未找到匹配结果"></el-empty>
     </div>
+
+    <!-- 2. 内容区域：标签页切换 -->
+    <div class="content-section">
+      <el-tabs v-model="activeTab" class="custom-tabs">
+        <el-tab-pane label="👀 最近捡到的 (招领)" name="found">
+          <div class="items-grid" v-loading="loading">
+             <div v-if="foundItems.length === 0" class="empty-state">
+                <el-empty description="暂无招领信息，大家保管得很好！" />
+             </div>
+             <el-row :gutter="20" v-else>
+               <el-col :xs="24" :sm="12" :md="8" :lg="6" v-for="item in foundItems" :key="item.id">
+                 <ItemCard :item="item" />
+               </el-col>
+             </el-row>
+          </div>
+        </el-tab-pane>
+
+        <el-tab-pane label="📢 最近丢失的 (寻物)" name="lost">
+          <div class="items-grid" v-loading="loading">
+            <div v-if="lostItems.length === 0" class="empty-state">
+                <el-empty description="暂无寻物启事，天下无贼！" />
+             </div>
+             <el-row :gutter="20" v-else>
+               <el-col :xs="24" :sm="12" :md="8" :lg="6" v-for="item in lostItems" :key="item.id">
+                 <ItemCard :item="item" />
+               </el-col>
+             </el-row>
+          </div>
+        </el-tab-pane>
+      </el-tabs>
+    </div>
+
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
-import apiClient from '../api'; // 确保 api.js 存在于 src 目录下
+import { ref, computed, onMounted } from 'vue';
+import { Camera } from '@element-plus/icons-vue';
+import apiClient from '../api';
+// 假设你有一个子组件展示卡片，如果没有，可以把下面的 ItemCard 换成你之前的卡片 HTML
+import ItemGrid from '../components/ItemGrid.vue'; // 或者你之前的卡片代码
 
 const searchText = ref('');
-const searchImageFile = ref(null);
-const searchImagePreview = ref('');
-const results = ref([]);
+const activeTab = ref('found');
 const loading = ref(false);
-const isSearched = ref(false); // 标记是否执行过搜索
-const uploadRef = ref(null);
+const allItems = ref([]);
+const searchImageFile = ref(null);
+const searchImagePreview = ref(false);
 
-const API_BASE_URL = 'https://catnebulaaa-xmulostandfound.hf.space'; // 你的 Space URL
+// 过滤数据：根据 Tab 分类
+const foundItems = computed(() => allItems.value.filter(item => item.item_type === 'found'));
+const lostItems = computed(() => allItems.value.filter(item => item.item_type === 'lost'));
 
-// 获取完整图片 URL
-const getImageUrl = (filename) => {
-  if (!filename) return '';
-  return `${API_BASE_URL}/api/images/${filename}`;
-};
+// 一个简单的内部组件用于展示卡片 (如果你没有 ItemGrid.vue，可以直接写在上面)
+const ItemCard = ItemGrid; 
 
-// 获取所有物品（首页加载时）
 const fetchAllItems = async () => {
   loading.value = true;
-  isSearched.value = false; // 重置搜索标记
   try {
-    const response = await apiClient.get('/api/items');
-    results.value = response.data.results || [];
-  } catch (error) {
-    console.error('获取物品列表失败:', error);
-    results.value = [];
+    const res = await apiClient.get('/api/items');
+    allItems.value = res.data.results || [];
+  } catch (err) {
+    console.error(err);
   } finally {
     loading.value = false;
   }
 };
 
-// 执行搜索
 const performSearch = async () => {
-  if (!searchText.value && !searchImageFile.value) {
-    // 如果搜索条件为空，则刷新为全部物品
-    await fetchAllItems();
-    return;
-  }
-
   loading.value = true;
-  isSearched.value = true;
   const formData = new FormData();
-  if (searchText.value) {
-    formData.append('query_text', searchText.value);
-  }
-  if (searchImageFile.value) {
-    formData.append('query_image', searchImageFile.value);
-  }
+  if (searchText.value) formData.append('query_text', searchText.value);
+  if (searchImageFile.value) formData.append('query_image', searchImageFile.value);
 
   try {
-    const response = await apiClient.post('/api/search', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
+    const res = await apiClient.post('/api/search', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
     });
-    results.value = response.data.results || [];
-  } catch (error) {
-    console.error('搜索失败:', error);
-    results.value = [];
+    allItems.value = res.data.results || [];
+  } catch (err) {
+    console.error(err);
   } finally {
     loading.value = false;
   }
 };
 
-// 处理图片选择
-const handleSearchImageChange = (file) => {
-  const rawFile = file.raw;
-  if (rawFile) {
-    searchImageFile.value = rawFile;
-    searchImagePreview.value = URL.createObjectURL(rawFile);
-  }
+const handleImageSearch = (file) => {
+  searchImageFile.value = file.raw;
+  searchImagePreview.value = true;
 };
 
-// 清除选择的图片
-const clearSearchImage = () => {
-  searchImageFile.value = null;
-  searchImagePreview.value = '';
-  if (uploadRef.value) {
-    uploadRef.value.clearFiles();
-  }
-};
-
-// 组件挂载时加载所有物品
 onMounted(() => {
   fetchAllItems();
 });
 </script>
 
 <style scoped>
-.home-view {
-  width: 100%;
-  padding: 20px;
+.home-container {
+  min-height: 100vh;
+  background-color: #f5f7fa;
 }
-.title {
+
+/* 蓝色 Banner */
+.banner-section {
+  background: linear-gradient(135deg, #a1c4fd 0%, #c2e9fb 100%); /* 仿截图的淡蓝色渐变 */
+  padding: 60px 20px 100px; /* 底部留白给搜索框 */
   text-align: center;
-  margin-bottom: 20px;
+  position: relative;
 }
-.search-card {
-  margin-bottom: 30px;
+
+.main-title {
+  color: #2c3e50;
+  font-size: 32px;
+  margin-bottom: 40px;
+  text-shadow: 0 2px 4px rgba(255,255,255,0.5);
 }
-.search-form {
+
+/* 悬浮搜索框 */
+.search-box-card {
   max-width: 800px;
   margin: 0 auto;
+  background: white;
+  padding: 10px;
+  border-radius: 50px; /* 圆角 */
+  box-shadow: 0 8px 30px rgba(0,0,0,0.1);
 }
-.image-preview-container {
+
+.custom-search-input :deep(.el-input__wrapper) {
+  box-shadow: none; /* 去掉默认边框 */
+}
+
+.search-actions {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  margin-top: 15px;
+  gap: 10px;
 }
-.image-preview {
-  width: 150px;
-  height: 150px;
-  border: 1px dashed #d9d9d9;
-  border-radius: 6px;
-  margin-bottom: 5px;
+
+/* 内容区域 */
+.content-section {
+  max-width: 1200px;
+  margin: -60px auto 0; /* 向上重叠 Banner */
+  padding: 0 20px;
+  position: relative;
+  z-index: 10;
 }
-.results-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
+
+.custom-tabs {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.05);
+  min-height: 400px;
 }
-.result-col {
-  margin-bottom: 20px;
-}
-.result-card .result-image {
-  width: 100%;
-  height: 200px;
-  display: block;
-}
-.result-info {
-  padding: 14px;
-}
-.result-info p {
-  margin: 0 0 8px 0;
-  font-size: 14px;
-  color: #606266;
-}
-.result-info .description {
-  font-weight: bold;
-  color: #303133;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.result-info .time {
-  font-size: 12px;
-  color: #999;
-}
-.image-slot {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  width: 100%;
-  height: 100%;
-  background: #f5f7fa;
-  color: #909399;
+
+.empty-state {
+  padding: 50px 0;
 }
 </style>

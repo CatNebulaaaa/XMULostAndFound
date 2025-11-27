@@ -1,73 +1,104 @@
+<!-- frontend/src/views/UploadView.vue -->
 <template>
-  <div class="upload-view">
-    <el-card class="upload-card">
-      <h1 class="title">📝 发布信息</h1>
-      <el-form :model="form" ref="uploadFormRef" label-position="top" class="upload-form" @submit.prevent>
+  <div class="upload-container">
+    <div class="form-card">
+      <div class="card-header">
+        <h2>📝 发布信息</h2>
+        <p class="subtitle">请尽可能详细地描述物品特征</p>
+      </div>
 
-        <!-- 1. 新增：信息类型 -->
-        <el-form-item label="信息类型" prop="item_type">
-          <el-radio-group v-model="form.item_type">
-            <el-radio-button label="found">😇 我捡到了 (失物招领)</el-radio-button>
-            <el-radio-button label="lost">😭 我丢了 (寻物启事)</el-radio-button>
-          </el-radio-group>
+      <el-form :model="form" ref="uploadFormRef" label-position="top">
+        
+        <!-- 1. 信息类型切换 (还原了大按钮样式) -->
+        <el-form-item label="信息类型">
+          <div class="type-selector">
+            <div 
+              class="type-btn" 
+              :class="{ active: form.item_type === 'found' }"
+              @click="form.item_type = 'found'"
+            >
+              😇 我捡到了 (失物招领)
+            </div>
+            <div 
+              class="type-btn" 
+              :class="{ active: form.item_type === 'lost' }"
+              @click="form.item_type = 'lost'"
+            >
+              😭 我丢了 (寻物启事)
+            </div>
+          </div>
         </el-form-item>
 
-        <!-- 2. 图片上传 -->
-        <el-form-item label="物品图片 (必须)" prop="image">
+        <!-- 2. 图片上传 (还原了 Picture Card 样式) -->
+        <el-form-item label="上传图片 (AI自动识别特征)">
           <el-upload
             ref="uploadRef"
             list-type="picture-card"
             :auto-upload="false"
             :limit="1"
             @change="handleFileChange"
-            @exceed="handleFileExceed"
             @remove="handleRemoveFile"
+            @exceed="handleFileExceed"
+            class="custom-upload"
           >
             <el-icon><Plus /></el-icon>
           </el-upload>
         </el-form-item>
 
-        <!-- 3. 物品描述 -->
-        <el-form-item label="物品描述 (必填)" prop="description">
-          <el-input v-model="form.description" type="textarea" :rows="3" placeholder="请尽可能详细地描述物品特征，如颜色、品牌、大小等" />
-        </el-form-item>
-        
-        <!-- 4. 恢复并优化：地点 -->
-        <el-form-item label="地点 (必填)" prop="location">
-          <el-autocomplete
-            v-model="form.location"
-            :fetch-suggestions="queryLocations"
-            placeholder="请选择或输入地点，如：德旺图书馆"
-            style="width: 100%;"
-            clearable
+        <!-- 3. 地点和分类 (还原了并排布局) -->
+        <el-row :gutter="20">
+          <el-col :span="12">
+            <el-form-item label="发生地点">
+              <el-autocomplete
+                v-model="form.location"
+                :fetch-suggestions="queryLocations"
+                placeholder="思源食堂"
+                style="width: 100%;"
+              />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="物品分类">
+              <el-select v-model="form.category" placeholder="校园卡/证件" style="width: 100%;">
+                <el-option label="电子产品" value="电子产品" />
+                <el-option label="证件" value="证件" />
+                <el-option label="书籍" value="书籍" />
+                <el-option label="钥匙/雨伞" value="钥匙/雨伞" />
+                <el-option label="衣物" value="衣物" />
+                <el-option label="其他" value="其他" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <!-- 4. 描述 -->
+        <el-form-item label="物品描述 (颜色、品牌、特殊痕迹等)">
+          <el-input 
+            v-model="form.description" 
+            type="textarea" 
+            :rows="3" 
+            placeholder="学生卡" 
           />
         </el-form-item>
 
-        <!-- 5. 分类 -->
-        <el-form-item label="分类 (必填)" prop="category">
-          <el-select v-model="form.category" placeholder="请选择物品分类" style="width: 100%;">
-            <el-option label="电子产品 (手机/耳机/充电宝)" value="电子产品"></el-option>
-            <el-option label="证件 (校园卡/身份证)" value="证件"></el-option>
-            <el-option label="钥匙/雨伞" value="钥匙/雨伞"></el-option>
-            <el-option label="书籍/文具" value="书籍/文具"></el-option>
-            <el-option label="衣物/饰品" value="衣物/饰品"></el-option>
-            <el-option label="其他" value="其他"></el-option>
-          </el-select>
-        </el-form-item>
-
-        <!-- 6. 联系方式 -->
-        <el-form-item label="联系方式 (必填)" prop="contact">
-          <el-input v-model="form.contact" placeholder="微信号 / QQ号 / 手机号">
-            <template #prepend>联系方式</template>
+        <!-- 5. 联系方式 -->
+        <el-form-item label="联系方式 (仅展示给搜索到的人)">
+          <el-input v-model="form.contact" placeholder="12123">
+            <template #prefix>
+              <el-icon><Message /></el-icon>
+            </template>
           </el-input>
         </el-form-item>
 
         <!-- 提交按钮 -->
-        <el-form-item>
-          <el-button type="primary" @click="handleSubmit" :loading="loading" class="submit-btn" native-type="submit">立即发布</el-button>
-        </el-form-item>
+        <div class="submit-area">
+          <el-button type="primary" size="large" class="submit-btn" @click="handleSubmit" :loading="loading">
+            立即发布
+          </el-button>
+        </div>
+
       </el-form>
-    </el-card>
+    </div>
   </div>
 </template>
 
@@ -75,7 +106,7 @@
 import { ref, reactive } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage, genFileId } from 'element-plus';
-import { Plus } from '@element-plus/icons-vue';
+import { Plus, Message } from '@element-plus/icons-vue';
 import apiClient from '../api';
 
 const router = useRouter();
@@ -83,48 +114,28 @@ const loading = ref(false);
 const uploadRef = ref(null);
 
 const form = reactive({
-  description: '',
+  item_type: 'found', // 默认为 "found"
   location: '',
   category: '',
+  description: '',
   contact: '',
-  item_type: 'found', // 默认为 "found" (我捡到了)
   imageFile: null
 });
 
-// 预设的地点列表
+// 地点预设
 const allLocations = [
-  { value: '翔安校区-德旺图书馆' },
-  { value: '翔安校区-主楼群（坤銮/文宣/学武/1号楼）' },
-  { value: '翔安校区-一期食堂' },
-  { value: '翔安校区-二期食堂' },
-  { value: '翔安校区-学生公寓（芙蓉/凌云/国光）' },
-  { value: '翔安校区-学生活动中心' },
-  { value: '思明校区-图书馆总馆' },
-  { value: '思明校区-嘉庚楼群' },
-  { value: '思明校区-芙蓉餐厅' },
-  { value: '思明校区-勤业餐厅' },
-  { value: '思明校区-南光/芙蓉/石井宿舍区' },
-  { value: '思明校区-上弦场/建南大会堂' },
-  { value: '校园巴士' },
+  { value: '思源食堂' }, { value: '德旺图书馆' }, { value: '芙蓉餐厅' },
+  { value: '勤业餐厅' }, { value: '嘉庚楼' }, { value: '主楼群' },
+  { value: '上弦场' }, { value: '南光/芙蓉宿舍' }
 ];
-
-// 地点自动补全的查询逻辑
-const queryLocations = (queryString, cb) => {
-  const results = queryString
-    ? allLocations.filter(item => item.value.toLowerCase().includes(queryString.toLowerCase()))
-    : allLocations;
+const queryLocations = (qs, cb) => {
+  const results = qs ? allLocations.filter(i => i.value.toLowerCase().includes(qs.toLowerCase())) : allLocations;
   cb(results);
 };
 
-// 文件状态处理
-const handleFileChange = (file) => {
-  form.imageFile = file.raw;
-};
-
-const handleRemoveFile = () => {
-  form.imageFile = null;
-};
-
+// 文件处理
+const handleFileChange = (file) => { form.imageFile = file.raw; };
+const handleRemoveFile = () => { form.imageFile = null; };
 const handleFileExceed = (files) => {
   uploadRef.value.clearFiles();
   const file = files[0];
@@ -133,41 +144,31 @@ const handleFileExceed = (files) => {
   form.imageFile = file.raw;
 };
 
-// 提交表单的核心逻辑
+// 提交逻辑 (保留了修复后的核心逻辑)
 const handleSubmit = async () => {
   if (!form.imageFile || !form.description || !form.location || !form.category || !form.contact) {
-    ElMessage.error('请将所有必填项填写完整！');
+    ElMessage.error('请填写完整信息（图片、描述、地点、分类、联系方式）');
     return;
   }
 
   loading.value = true;
   const formData = new FormData();
-  
-  // 添加所有后端需要的字段，确保和后端main.py接口一致
   formData.append('file', form.imageFile);
   formData.append('description', form.description);
   formData.append('location', form.location);
   formData.append('category', form.category);
-  formData.append('contact', form.contact);
-  formData.append('item_type', form.item_type);
+  formData.append('contact', form.contact);     // 必传
+  formData.append('item_type', form.item_type); // 必传
 
   try {
-    // API请求路径为 /api/items
     await apiClient.post('/api/items', formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     });
-    
-    ElMessage.success('发布成功！即将跳转到首页...');
-    setTimeout(() => router.push('/'), 1500); // 延迟跳转，给用户看提示的时间
-
+    ElMessage.success('发布成功！');
+    setTimeout(() => router.push('/'), 1000);
   } catch (error) {
-    console.error('发布失败:', error);
-    let errorMessage = '发布失败，请稍后重试';
-    if (error.response) {
-      // 从后端获取更详细的错误信息
-      errorMessage = error.response.data?.detail || `服务器错误 (${error.response.status})`;
-    }
-    ElMessage.error(errorMessage);
+    console.error(error);
+    ElMessage.error(error.response?.data?.detail || '发布失败');
   } finally {
     loading.value = false;
   }
@@ -175,30 +176,77 @@ const handleSubmit = async () => {
 </script>
 
 <style scoped>
-.upload-view {
+.upload-container {
   display: flex;
   justify-content: center;
-  padding: 20px;
-  background-color: #f5f7fa;
-  min-height: calc(100vh - 60px); /* 假设Header高度为60px */
+  padding: 40px 20px;
+  background-color: #f9f9f9;
+  min-height: 100vh;
 }
-.upload-card {
+
+.form-card {
   width: 100%;
-  max-width: 700px;
+  max-width: 800px;
+  background: white;
+  padding: 40px;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
 }
-.title {
-  text-align: center;
-  margin-bottom: 25px;
+
+.card-header {
+  margin-bottom: 30px;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 15px;
+}
+
+.card-header h2 {
   font-size: 24px;
-  color: #303133;
+  color: #333;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
 }
+
+.subtitle {
+  color: #999;
+  margin-top: 5px;
+  font-size: 14px;
+}
+
+/* 还原大按钮样式 */
+.type-selector {
+  display: flex;
+  gap: 20px;
+}
+
+.type-btn {
+  flex: 1;
+  padding: 12px;
+  text-align: center;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.3s;
+  font-weight: bold;
+  color: #606266;
+}
+
+.type-btn:hover {
+  border-color: #409eff;
+  color: #409eff;
+}
+
+.type-btn.active {
+  background-color: #409eff;
+  color: white;
+  border-color: #409eff;
+}
+
 .submit-btn {
   width: 100%;
+  margin-top: 20px;
+  border-radius: 20px;
   font-size: 16px;
-  height: 40px;
-}
-/* 针对 el-form-item 的一些微调 */
-.el-form-item {
-  margin-bottom: 22px;
 }
 </style>
