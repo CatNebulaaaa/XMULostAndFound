@@ -82,8 +82,8 @@ async def upload_item(
     description: str = Form(...),
     location: str = Form(...),
     category: str = Form(...),
-    contact: str = Form(...),     # <-- 新增
-    item_type: str = Form(...),   # <-- 新增 ("found" or "lost")
+    contact: str = Form(...),
+    item_type: str = Form(...),
 ):
     # -----------------------------
     # 1. 保存图片到本地临时文件系统
@@ -135,8 +135,8 @@ async def upload_item(
         category=category,
         image_filename=filename,
         tags=tags,
-        contact=contact,         # <-- 新增
-        item_type=item_type      # <-- 新增
+        contact=contact,
+        item_type=item_type
     )
 
     # -----------------------------
@@ -163,7 +163,7 @@ async def upload_item(
 
 
 # ============================================================
-# POST /api/search   混合检索
+# POST /api/search   混合检索 (已应用归一化加权逻辑)
 # ============================================================
 @app.post("/api/search")
 async def search_items(
@@ -174,7 +174,7 @@ async def search_items(
     date_range_start: str = Form(None),
     date_range_end: str = Form(None),
 ):
-    # Step 1：先进行元数据过滤
+    # Step 1：先进行元数据过滤 (Filters)
     candidates = filter_items(
         location=location,
         category=category,
@@ -185,7 +185,7 @@ async def search_items(
     if len(candidates) == 0:
         return {"results": []}
 
-    # Step 2：生成查询向量
+    # Step 2：生成查询向量 (Query Vector)
     if query_text is None and query_image is None:
         raise HTTPException(400, "query_text 和 query_image 至少提供一个")
 
@@ -197,33 +197,86 @@ async def search_items(
 
     query_vec_np = np.array([query_vec]).astype("float32")
 
-    # Step 3：语义向量检索
-    top_k = min(50, len(candidates))
+    # Step 3：语义向量检索 (Semantic Search)
+    # 根据实验结果，n=100 是一个很好的平衡点
+    top_k = min(100, len(candidates))
+    
     if top_k == 0 or index.ntotal == 0:
         return {"results": []}
         
     distances, ids = search_in_index(index, query_vec_np, top_k)
-    semantic_scores = {int(vid): float(1.0 / (dist + 1e-6)) for dist, vid in zip(distances[0], ids[0])}
+    
+    # 3.1 计算原始语义分数 (Raw Semantic Scores)
+    # 使用 1 / (distance + epsilon) 作为相似度分数
+    semantic_scores_raw = {}
+    if len(ids) > 0:
+        for dist, vid in zip(distances[0], ids[0]):
+            if vid == -1: continue # 过滤掉 FAISS 的填充值
+            semantic_scores_raw[int(vid)] = 1.0 / (dist + 1e-9)
 
-    # Step 4：混合打分与排序
+    # Step 4：关键词匹配 (Keyword Matching)
+    # 4.1 计算原始关键词分数 (Raw Keyword Scores)
+    keyword_scores_raw = {}
+    query_tokens = []
     if query_text:
         query_tokens = query_text.lower().split()
-    else:
-        query_tokens = []
 
-    results = []
+    # 这里的优化是：只计算那些被向量检索召回的物品，或者只计算 candidates 里的物品
+    # 为了效率，我们只处理 candidates
     for item in candidates:
-        base = 0
-        if query_tokens:
-            item_tags = " ".join(item.get("tags", [])).lower()
-            for token in query_tokens:
-                if token in item_tags:
-                    base += 1.0
+        vec_id = item['vec_id']
         
-        semantic = semantic_scores.get(item["vec_id"], 0)
-        item["score"] = base + semantic
-        results.append(item)
+        # 如果这个物品不在向量检索的前100名里，我们暂时直接略过
+        # (因为我们的逻辑是“语义召回”，如果连语义前100都进不去，就不展示了)
+        if vec_id not in semantic_scores_raw:
+            continue
+            
+        # 拼接描述和标签进行匹配
+        content_to_match = (item.get("description", "") + " " + " ".join(item.get("tags", []))).lower()
+        
+        score = 0.0
+        if query_tokens:
+            # 简单的词频统计
+            score = sum(1.0 for token in query_tokens if token in content_to_match)
+        
+        keyword_scores_raw[vec_id] = score
 
+    # Step 5：归一化 (Normalization) - 核心改进点
+    # 获取最大值用于归一化
+    max_semantic = max(semantic_scores_raw.values()) if semantic_scores_raw else 1.0
+    max_keyword = max(keyword_scores_raw.values()) if keyword_scores_raw else 1.0
+    
+    # 防止除以零
+    if max_semantic == 0: max_semantic = 1.0
+    if max_keyword == 0: max_keyword = 1.0
+
+    # Step 6：加权融合 (Weighted Fusion) - 核心改进点
+    # 根据实验报告，alpha=0.8 效果最佳
+    ALPHA = 0.8 
+    
+    results = []
+    
+    # 再次遍历 candidates 来组装最终结果
+    for item in candidates:
+        vec_id = item['vec_id']
+        
+        # 依然只处理被向量检索召回的物品
+        if vec_id in semantic_scores_raw:
+            # 获取原始分数
+            s_raw = semantic_scores_raw[vec_id]
+            k_raw = keyword_scores_raw.get(vec_id, 0.0)
+            
+            # 进行归一化
+            norm_s = s_raw / max_semantic
+            norm_k = k_raw / max_keyword
+            
+            # 混合打分公式
+            final_score = (ALPHA * norm_s) + ((1 - ALPHA) * norm_k)
+            
+            item["score"] = final_score
+            results.append(item)
+
+    # Step 7：排序并返回
     results.sort(key=lambda x: x["score"], reverse=True)
 
     return {"results": results}
