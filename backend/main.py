@@ -24,16 +24,14 @@ try:
     import os
     import uuid
 except Exception:
-    # 这一步是为了把隐藏的错误打印到日志里
     traceback.print_exc()
     raise
 
 app = FastAPI()
 
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 允许所有来源，生产环境请改为具体的域名
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -45,31 +43,24 @@ app.add_middleware(
 IMAGE_DIR = "images"
 INDEX_PATH = "vectors.index"
 DATABASE_PATH = "database.json"
-
-# 从环境变量获取 Hugging Face Token，这是持久化数据的关键
 HUGGING_FACE_TOKEN = os.getenv("HF_TOKEN")
 
-# 启动时，先从云端同步数据
 if HUGGING_FACE_TOKEN:
     pull_data(HUGGING_FACE_TOKEN)
 else:
-    print("警告：未配置 HF_TOKEN，无法从云端同步数据。将使用本地数据（如果存在）。")
+    print("警告：未配置 HF_TOKEN，使用本地数据。")
 
-
-# 加载 AI 模型
+# 加载模型
 clip_model, ocr_model = load_models()
 
-# 确保图片目录存在
 if not os.path.exists(IMAGE_DIR):
     os.makedirs(IMAGE_DIR)
 
-# 加载或构建向量索引
-# 注意：此时 database.json 应该已经是云端同步下来的最新版本
+# 加载索引
 items = get_all_items()
 if os.path.exists(INDEX_PATH):
-    index = build_or_load_index(None, INDEX_PATH) # 传 None 强制从文件加载
+    index = build_or_load_index(None, INDEX_PATH)
 else:
-    # 如果云端也没有 index 文件（首次启动），则创建一个空的
     index = build_or_load_index(np.zeros((0, 512)).astype("float32"), INDEX_PATH)
 
 
@@ -85,85 +76,62 @@ async def upload_item(
     contact: str = Form(...),
     item_type: str = Form(...),
 ):
-    # -----------------------------
-    # 1. 保存图片到本地临时文件系统
-    # -----------------------------
-    raw_bytes = await file.read()
-    filename = f"{uuid.uuid4().hex}.jpg"
-    file_path = os.path.join(IMAGE_DIR, filename)
-    with open(file_path, "wb") as f:
-        f.write(raw_bytes)
-
-    # -----------------------------
-    # 2. 提取多模态特征
-    # -----------------------------
     try:
-        vector = get_feature_vector(
-            clip_model=clip_model,
-            image_bytes=raw_bytes,
-            text=None
-        )
+        raw_bytes = await file.read()
+        filename = f"{uuid.uuid4().hex}.jpg"
+        file_path = os.path.join(IMAGE_DIR, filename)
+        with open(file_path, "wb") as f:
+            f.write(raw_bytes)
 
-        baidu_api_key = os.getenv("BAIDU_API_KEY")
-        baidu_secret_key = os.getenv("BAIDU_SECRET_KEY")
-
-        tags = get_tags_from_image(
-            ocr_model=ocr_model,
-            image_bytes=raw_bytes,
-            api_key=baidu_api_key,
-            secret_key=baidu_secret_key
-        )
-    except Exception as e:
-        print(f"特征提取失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"特征提取失败: {str(e)}")
-
-    # -----------------------------
-    # 3. 更新本地向量索引
-    # -----------------------------
-    vector_np = np.array([vector], dtype="float32")
-    vec_id = index.ntotal
-    add_to_index(index, vector_np)
-    save_index(index, INDEX_PATH) # 更新本地 vectors.index
-
-    # -----------------------------
-    # 4. 更新本地元数据库
-    # -----------------------------
-    new_item = add_item(
-        vec_id=vec_id,
-        description=description,
-        location=location,
-        category=category,
-        image_filename=filename,
-        tags=tags,
-        contact=contact,
-        item_type=item_type
-    )
-
-    # -----------------------------
-    # 5. [关键] 将所有本地改动推送回云端进行持久化
-    # -----------------------------
-    if not HUGGING_FACE_TOKEN:
-        print("警告：未在 Space Secrets 中找到 HF_TOKEN，本次上传无法被永久保存！")
-    else:
+        # 特征提取
+        vector = get_feature_vector(clip_model, image_bytes=raw_bytes)
+        
+        # OCR (带容错)
+        tags = []
         try:
-            print("开始将文件同步到 Hugging Face Dataset...")
-            push_data(HUGGING_FACE_TOKEN, file_path)
-            push_data(HUGGING_FACE_TOKEN, DATABASE_PATH)
-            push_data(HUGGING_FACE_TOKEN, INDEX_PATH)
-            print("文件同步成功！")
+            baidu_api_key = os.getenv("BAIDU_API_KEY")
+            baidu_secret_key = os.getenv("BAIDU_SECRET_KEY")
+            tags = get_tags_from_image(ocr_model, raw_bytes, baidu_api_key, baidu_secret_key)
         except Exception as e:
-            print(f"严重错误：数据持久化到 Hugging Face Dataset 失败: {e}")
-            # 生产环境中可能需要回滚本地更改或加入重试队列
-            raise HTTPException(status_code=500, detail=f"数据保存至云端失败: {e}")
+            print(f"标签提取警告: {e}")
+            tags = [] # 确保失败也是个空列表
 
-    return {
-        "status": "success",
-        "item": new_item
-    }
+        # 更新索引
+        vector_np = np.array([vector], dtype="float32")
+        vec_id = index.ntotal
+        add_to_index(index, vector_np)
+        save_index(index, INDEX_PATH)
+
+        # 更新数据库
+        new_item = add_item(
+            vec_id=vec_id,
+            description=description,
+            location=location,
+            category=category,
+            image_filename=filename,
+            tags=tags,
+            contact=contact,
+            item_type=item_type
+        )
+
+        # 同步云端
+        if HUGGING_FACE_TOKEN:
+            try:
+                push_data(HUGGING_FACE_TOKEN, file_path)
+                push_data(HUGGING_FACE_TOKEN, DATABASE_PATH)
+                push_data(HUGGING_FACE_TOKEN, INDEX_PATH)
+            except Exception as e:
+                print(f"云端同步失败: {e}")
+
+        return {"status": "success", "item": new_item}
+    
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================
-# POST /api/search   混合检索 (已应用归一化加权逻辑)
+# POST /api/search   混合检索 (修复版 - 防崩溃)
 # ============================================================
 @app.post("/api/search")
 async def search_items(
@@ -174,131 +142,123 @@ async def search_items(
     date_range_start: str = Form(None),
     date_range_end: str = Form(None),
 ):
-    # Step 1：先进行元数据过滤 (Filters)
-    candidates = filter_items(
-        location=location,
-        category=category,
-        date_range_start=date_range_start,
-        date_range_end=date_range_end
-    )
+    try:
+        # Step 1：过滤
+        candidates = filter_items(
+            location=location,
+            category=category,
+            date_range_start=date_range_start,
+            date_range_end=date_range_end
+        )
 
-    if len(candidates) == 0:
-        return {"results": []}
+        if len(candidates) == 0:
+            return {"results": []}
 
-    # Step 2：生成查询向量 (Query Vector)
-    if query_text is None and query_image is None:
-        raise HTTPException(400, "query_text 和 query_image 至少提供一个")
+        # Step 2：查询向量
+        if query_text is None and query_image is None:
+            # 如果没有查询条件，直接返回按时间排序的过滤结果
+            candidates.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+            return {"results": candidates}
 
-    if query_image:
-        raw = await query_image.read()
-        query_vec = get_feature_vector(clip_model, image_bytes=raw)
-    else:
-        query_vec = get_feature_vector(clip_model, text=query_text)
+        if query_image:
+            raw = await query_image.read()
+            query_vec = get_feature_vector(clip_model, image_bytes=raw)
+        else:
+            query_vec = get_feature_vector(clip_model, text=query_text)
 
-    query_vec_np = np.array([query_vec]).astype("float32")
+        query_vec_np = np.array([query_vec]).astype("float32")
 
-    # Step 3：语义向量检索 (Semantic Search)
-    # 根据实验结果，n=100 是一个很好的平衡点
-    top_k = min(100, len(candidates))
-    
-    if top_k == 0 or index.ntotal == 0:
-        return {"results": []}
-        
-    distances, ids = search_in_index(index, query_vec_np, top_k)
-    
-    # 3.1 计算原始语义分数 (Raw Semantic Scores)
-    # 使用 1 / (distance + epsilon) 作为相似度分数
-    semantic_scores_raw = {}
-    if len(ids) > 0:
-        for dist, vid in zip(distances[0], ids[0]):
-            if vid == -1: continue # 过滤掉 FAISS 的填充值
-            semantic_scores_raw[int(vid)] = 1.0 / (dist + 1e-9)
-
-    # Step 4：关键词匹配 (Keyword Matching)
-    # 4.1 计算原始关键词分数 (Raw Keyword Scores)
-    keyword_scores_raw = {}
-    query_tokens = []
-    if query_text:
-        query_tokens = query_text.lower().split()
-
-    # 这里的优化是：只计算那些被向量检索召回的物品，或者只计算 candidates 里的物品
-    # 为了效率，我们只处理 candidates
-    for item in candidates:
-        vec_id = item['vec_id']
-        
-        # 如果这个物品不在向量检索的前100名里，我们暂时直接略过
-        # (因为我们的逻辑是“语义召回”，如果连语义前100都进不去，就不展示了)
-        if vec_id not in semantic_scores_raw:
-            continue
+        # Step 3：语义检索
+        top_k = min(100, len(candidates)) # Top-K 100
+        if top_k <= 0 or index.ntotal == 0:
+            return {"results": []}
             
-        # 拼接描述和标签进行匹配
-        content_to_match = (item.get("description", "") + " " + " ".join(item.get("tags", []))).lower()
+        distances, ids = search_in_index(index, query_vec_np, top_k)
         
-        score = 0.0
-        if query_tokens:
-            # 简单的词频统计
-            score = sum(1.0 for token in query_tokens if token in content_to_match)
+        # [安全修复] 语义分数表
+        semantic_scores_raw = {}
+        if len(ids) > 0:
+            for dist, vid in zip(distances[0], ids[0]):
+                if vid == -1: continue 
+                semantic_scores_raw[int(vid)] = 1.0 / (dist + 1e-9)
+
+        # Step 4：关键词匹配 & 归一化准备
+        keyword_scores_raw = {}
+        query_tokens = []
+        if query_text:
+            query_tokens = query_text.lower().split()
+
+        for item in candidates:
+            # [安全修复] 强制转int，防止类型不匹配
+            try:
+                vec_id = int(item['vec_id'])
+            except:
+                continue
+
+            # 如果不在语义召回范围内，跳过 (Top-100 逻辑)
+            if vec_id not in semantic_scores_raw:
+                continue
+            
+            # [安全修复] 防止 tags 为 None 导致 join 崩溃
+            tags_list = item.get("tags")
+            if tags_list is None: 
+                tags_list = []
+            
+            # [安全修复] 防止 description 为 None
+            desc_text = item.get("description") or ""
+            
+            content_to_match = (desc_text + " " + " ".join(tags_list)).lower()
+            
+            score = 0.0
+            if query_tokens:
+                score = sum(1.0 for token in query_tokens if token in content_to_match)
+            keyword_scores_raw[vec_id] = score
+
+        # Step 5：归一化
+        max_semantic = max(semantic_scores_raw.values()) if semantic_scores_raw else 1.0
+        max_keyword = max(keyword_scores_raw.values()) if keyword_scores_raw else 1.0
         
-        keyword_scores_raw[vec_id] = score
+        if max_semantic == 0: max_semantic = 1.0
+        if max_keyword == 0: max_keyword = 1.0
 
-    # Step 5：归一化 (Normalization) - 核心改进点
-    # 获取最大值用于归一化
-    max_semantic = max(semantic_scores_raw.values()) if semantic_scores_raw else 1.0
-    max_keyword = max(keyword_scores_raw.values()) if keyword_scores_raw else 1.0
-    
-    # 防止除以零
-    if max_semantic == 0: max_semantic = 1.0
-    if max_keyword == 0: max_keyword = 1.0
-
-    # Step 6：加权融合 (Weighted Fusion) - 核心改进点
-    # 根据实验报告，alpha=0.8 效果最佳
-    ALPHA = 0.8 
-    
-    results = []
-    
-    # 再次遍历 candidates 来组装最终结果
-    for item in candidates:
-        vec_id = item['vec_id']
+        # Step 6：加权融合 (Alpha=0.8)
+        ALPHA = 0.8 
+        results = []
         
-        # 依然只处理被向量检索召回的物品
-        if vec_id in semantic_scores_raw:
-            # 获取原始分数
-            s_raw = semantic_scores_raw[vec_id]
-            k_raw = keyword_scores_raw.get(vec_id, 0.0)
+        for item in candidates:
+            try:
+                vec_id = int(item['vec_id'])
+            except:
+                continue
             
-            # 进行归一化
-            norm_s = s_raw / max_semantic
-            norm_k = k_raw / max_keyword
-            
-            # 混合打分公式
-            final_score = (ALPHA * norm_s) + ((1 - ALPHA) * norm_k)
-            
-            item["score"] = final_score
-            results.append(item)
+            if vec_id in semantic_scores_raw:
+                s_raw = semantic_scores_raw[vec_id]
+                k_raw = keyword_scores_raw.get(vec_id, 0.0)
+                
+                norm_s = s_raw / max_semantic
+                norm_k = k_raw / max_keyword
+                
+                final_score = (ALPHA * norm_s) + ((1 - ALPHA) * norm_k)
+                item["score"] = final_score
+                results.append(item)
 
-    # Step 7：排序并返回
-    results.sort(key=lambda x: x["score"], reverse=True)
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return {"results": results}
 
-    return {"results": results}
+    except Exception as e:
+        # [关键] 捕获所有错误并打印日志，防止 500 导致前端无响应
+        print("Search API Error:")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
-# ============================================================
-# GET /api/items   获取所有物品（用于首页展示）
-# ============================================================
 @app.get("/api/items")
 async def get_all_items_endpoint():
-    """
-    提供一个接口用于前端获取所有物品列表。
-    """
     items = get_all_items()
-    # 按时间戳倒序排列，最新的在前面
     sorted_items = sorted(items, key=lambda x: x.get('timestamp', ''), reverse=True)
     return {"results": sorted_items}
 
 
-# ============================================================
-# GET /api/images/{filename}  返回图片
-# ============================================================
 @app.get("/api/images/{filename}")
 async def get_image(filename: str):
     filepath = os.path.join(IMAGE_DIR, filename)
@@ -307,8 +267,5 @@ async def get_image(filename: str):
     return FileResponse(filepath)
 
 
-# ============================================================
-# 启动服务（开发模式）
-# ============================================================
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
