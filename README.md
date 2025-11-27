@@ -1,4 +1,4 @@
-# XMULostAndFind
+# XMULostAndFound
 
 一个为厦门大学(XMU)打造的智能失物找-寻平台，旨在解决校园内失物招领处**信息分散、寻物效率低下**的核心痛点。
 
