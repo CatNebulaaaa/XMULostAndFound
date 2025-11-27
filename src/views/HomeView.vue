@@ -1,4 +1,4 @@
-<!-- frontend/src/views/HomeView.vue -->
+
 <template>
   <div class="home-container">
     
@@ -17,17 +17,21 @@
         >
           <template #suffix>
             <div class="search-actions">
+              <!-- 图片上传组件 -->
               <el-upload
+                ref="uploadRef" 
                 :auto-upload="false"
                 :show-file-list="false"
                 @change="handleImageSearch"
                 accept="image/*"
                 class="upload-icon-btn"
               >
-                <el-button link>
-                  <el-icon><Camera /></el-icon> {{ searchImagePreview ? '已选图' : '以图搜图' }}
+                <!-- 根据状态显示不同文字 -->
+                <el-button link :type="searchImagePreview ? 'success' : 'default'">
+                  <el-icon><Camera /></el-icon> {{ searchImagePreview ? '已选图 (点击更换)' : '以图搜图' }}
                 </el-button>
               </el-upload>
+              
               <el-button type="primary" @click="performSearch" :loading="loading">搜索</el-button>
             </div>
           </template>
@@ -42,14 +46,12 @@
         <!-- Tab 1: 招领 -->
         <el-tab-pane label="👀 最近捡到的 (招领)" name="found">
           <div class="items-grid" v-loading="loading">
-             <!-- 安全检查：加上 ?. 防止报错 -->
              <div v-if="foundItems?.length === 0" class="empty-state">
                 <el-empty description="暂无招领信息，大家保管得很好！" />
              </div>
              
              <el-row :gutter="20" v-else>
                <el-col :xs="24" :sm="12" :md="8" :lg="6" v-for="item in foundItems" :key="item.id">
-                 <!-- 直接内嵌卡片代码，不再引用外部组件 -->
                  <el-card shadow="hover" class="item-card" :body-style="{ padding: '0px' }">
                     <div class="image-wrapper">
                       <el-image 
@@ -96,7 +98,6 @@
              </div>
              <el-row :gutter="20" v-else>
                <el-col :xs="24" :sm="12" :md="8" :lg="6" v-for="item in lostItems" :key="item.id">
-                 <!-- 直接内嵌卡片代码 -->
                  <el-card shadow="hover" class="item-card" :body-style="{ padding: '0px' }">
                     <div class="image-wrapper">
                       <el-image 
@@ -150,13 +151,13 @@ import apiClient from '../api';
 const API_BASE_URL = 'https://catnebulaaa-xmulostandfound.hf.space';
 
 const searchText = ref('');
-const activeTab = ref('found'); // 默认显示招领
+const activeTab = ref('found'); 
 const loading = ref(false);
-const allItems = ref([]); // 初始化为空数组
+const allItems = ref([]); 
 const searchImageFile = ref(null);
 const searchImagePreview = ref(false);
+const uploadRef = ref(null); // 绑定到 el-upload 组件
 
-// 过滤数据：防止 allItems 为空时报错
 const foundItems = computed(() => {
   if (!allItems.value) return [];
   return allItems.value.filter(item => item.item_type === 'found');
@@ -167,14 +168,11 @@ const lostItems = computed(() => {
   return allItems.value.filter(item => item.item_type === 'lost');
 });
 
-// 获取所有物品
 const fetchAllItems = async () => {
   loading.value = true;
   try {
     const res = await apiClient.get('/api/items');
-    // 确保赋值的是数组，如果是 undefined 则给空数组
     allItems.value = res.data.results || [];
-    console.log("获取数据成功:", allItems.value);
   } catch (err) {
     console.error("获取数据失败:", err);
     allItems.value = [];
@@ -183,7 +181,15 @@ const fetchAllItems = async () => {
   }
 };
 
-// 执行搜索
+// 核心修改：清除搜索图片的函数
+const clearSearchImage = () => {
+  searchImageFile.value = null;      // 清空文件变量
+  searchImagePreview.value = false;  // 重置预览状态
+  if (uploadRef.value) {
+    uploadRef.value.clearFiles();    // 清空 Element Plus 组件内部的文件列表
+  }
+};
+
 const performSearch = async () => {
   loading.value = true;
   const formData = new FormData();
@@ -197,9 +203,11 @@ const performSearch = async () => {
     allItems.value = res.data.results || [];
   } catch (err) {
     console.error(err);
-    allItems.value = [];
+    // 这里不清空 allItems，保留上次结果或显示错误提示可能更好，看需求
   } finally {
     loading.value = false;
+    // 核心修改：搜索结束后自动清空选中的图片
+    clearSearchImage();
   }
 };
 
@@ -208,14 +216,12 @@ const handleImageSearch = (file) => {
   searchImagePreview.value = true;
 };
 
-// 辅助函数：拼接图片地址
 const getImageUrl = (filename) => {
   if (!filename) return '';
   if (filename.startsWith('http')) return filename;
   return `${API_BASE_URL}/api/images/${filename}`;
 };
 
-// 辅助函数：格式化时间
 const formatDate = (isoString) => {
   if (!isoString) return '';
   const date = new Date(isoString);
