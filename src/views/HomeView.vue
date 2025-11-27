@@ -38,31 +38,103 @@
     <!-- 2. 内容区域：标签页切换 -->
     <div class="content-section">
       <el-tabs v-model="activeTab" class="custom-tabs">
+        
+        <!-- Tab 1: 招领 -->
         <el-tab-pane label="👀 最近捡到的 (招领)" name="found">
           <div class="items-grid" v-loading="loading">
-             <div v-if="foundItems.length === 0" class="empty-state">
+             <!-- 安全检查：加上 ?. 防止报错 -->
+             <div v-if="foundItems?.length === 0" class="empty-state">
                 <el-empty description="暂无招领信息，大家保管得很好！" />
              </div>
+             
              <el-row :gutter="20" v-else>
                <el-col :xs="24" :sm="12" :md="8" :lg="6" v-for="item in foundItems" :key="item.id">
-                 <ItemCard :item="item" />
+                 <!-- 直接内嵌卡片代码，不再引用外部组件 -->
+                 <el-card shadow="hover" class="item-card" :body-style="{ padding: '0px' }">
+                    <div class="image-wrapper">
+                      <el-image 
+                        :src="getImageUrl(item.image_filename)" 
+                        fit="cover" 
+                        class="card-image"
+                        lazy
+                      >
+                        <template #error>
+                          <div class="image-error">
+                            <el-icon><Picture /></el-icon>
+                          </div>
+                        </template>
+                      </el-image>
+                      <div class="category-tag">{{ item.category }}</div>
+                    </div>
+                    <div class="card-content">
+                      <div class="card-header-row">
+                        <h3 class="item-desc">{{ item.description }}</h3>
+                      </div>
+                      <div class="info-row">
+                        <el-icon><Location /></el-icon>
+                        <span class="location-text">{{ item.location }}</span>
+                      </div>
+                      <div class="info-row contact-row" v-if="item.contact">
+                        <el-icon><Phone /></el-icon>
+                        <span class="contact-text">{{ item.contact }}</span>
+                      </div>
+                      <div class="time-row">
+                        {{ formatDate(item.timestamp) }}
+                      </div>
+                    </div>
+                 </el-card>
                </el-col>
              </el-row>
           </div>
         </el-tab-pane>
 
+        <!-- Tab 2: 寻物 -->
         <el-tab-pane label="📢 最近丢失的 (寻物)" name="lost">
           <div class="items-grid" v-loading="loading">
-            <div v-if="lostItems.length === 0" class="empty-state">
+            <div v-if="lostItems?.length === 0" class="empty-state">
                 <el-empty description="暂无寻物启事，天下无贼！" />
              </div>
              <el-row :gutter="20" v-else>
                <el-col :xs="24" :sm="12" :md="8" :lg="6" v-for="item in lostItems" :key="item.id">
-                 <ItemCard :item="item" />
+                 <!-- 直接内嵌卡片代码 -->
+                 <el-card shadow="hover" class="item-card" :body-style="{ padding: '0px' }">
+                    <div class="image-wrapper">
+                      <el-image 
+                        :src="getImageUrl(item.image_filename)" 
+                        fit="cover" 
+                        class="card-image"
+                        lazy
+                      >
+                        <template #error>
+                          <div class="image-error">
+                            <el-icon><Picture /></el-icon>
+                          </div>
+                        </template>
+                      </el-image>
+                      <div class="category-tag">{{ item.category }}</div>
+                    </div>
+                    <div class="card-content">
+                      <div class="card-header-row">
+                        <h3 class="item-desc">{{ item.description }}</h3>
+                      </div>
+                      <div class="info-row">
+                        <el-icon><Location /></el-icon>
+                        <span class="location-text">{{ item.location }}</span>
+                      </div>
+                      <div class="info-row contact-row" v-if="item.contact">
+                        <el-icon><Phone /></el-icon>
+                        <span class="contact-text">{{ item.contact }}</span>
+                      </div>
+                      <div class="time-row">
+                        {{ formatDate(item.timestamp) }}
+                      </div>
+                    </div>
+                 </el-card>
                </el-col>
              </el-row>
           </div>
         </el-tab-pane>
+
       </el-tabs>
     </div>
 
@@ -71,37 +143,47 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
-import { Camera } from '@element-plus/icons-vue';
+import { Camera, Location, Picture, Phone } from '@element-plus/icons-vue';
 import apiClient from '../api';
-// 假设你有一个子组件展示卡片，如果没有，可以把下面的 ItemCard 换成你之前的卡片 HTML
-import ItemGrid from '../components/ItemGrid.vue'; // 或者你之前的卡片代码
+
+// 后端地址
+const API_BASE_URL = 'https://catnebulaaa-xmulostandfound.hf.space';
 
 const searchText = ref('');
-const activeTab = ref('found');
+const activeTab = ref('found'); // 默认显示招领
 const loading = ref(false);
-const allItems = ref([]);
+const allItems = ref([]); // 初始化为空数组
 const searchImageFile = ref(null);
 const searchImagePreview = ref(false);
 
-// 过滤数据：根据 Tab 分类
-const foundItems = computed(() => allItems.value.filter(item => item.item_type === 'found'));
-const lostItems = computed(() => allItems.value.filter(item => item.item_type === 'lost'));
+// 过滤数据：防止 allItems 为空时报错
+const foundItems = computed(() => {
+  if (!allItems.value) return [];
+  return allItems.value.filter(item => item.item_type === 'found');
+});
 
-// 一个简单的内部组件用于展示卡片 (如果你没有 ItemGrid.vue，可以直接写在上面)
-const ItemCard = ItemGrid; 
+const lostItems = computed(() => {
+  if (!allItems.value) return [];
+  return allItems.value.filter(item => item.item_type === 'lost');
+});
 
+// 获取所有物品
 const fetchAllItems = async () => {
   loading.value = true;
   try {
     const res = await apiClient.get('/api/items');
+    // 确保赋值的是数组，如果是 undefined 则给空数组
     allItems.value = res.data.results || [];
+    console.log("获取数据成功:", allItems.value);
   } catch (err) {
-    console.error(err);
+    console.error("获取数据失败:", err);
+    allItems.value = [];
   } finally {
     loading.value = false;
   }
 };
 
+// 执行搜索
 const performSearch = async () => {
   loading.value = true;
   const formData = new FormData();
@@ -115,6 +197,7 @@ const performSearch = async () => {
     allItems.value = res.data.results || [];
   } catch (err) {
     console.error(err);
+    allItems.value = [];
   } finally {
     loading.value = false;
   }
@@ -123,6 +206,20 @@ const performSearch = async () => {
 const handleImageSearch = (file) => {
   searchImageFile.value = file.raw;
   searchImagePreview.value = true;
+};
+
+// 辅助函数：拼接图片地址
+const getImageUrl = (filename) => {
+  if (!filename) return '';
+  if (filename.startsWith('http')) return filename;
+  return `${API_BASE_URL}/api/images/${filename}`;
+};
+
+// 辅助函数：格式化时间
+const formatDate = (isoString) => {
+  if (!isoString) return '';
+  const date = new Date(isoString);
+  return date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 };
 
 onMounted(() => {
@@ -138,8 +235,8 @@ onMounted(() => {
 
 /* 蓝色 Banner */
 .banner-section {
-  background: linear-gradient(135deg, #a1c4fd 0%, #c2e9fb 100%); /* 仿截图的淡蓝色渐变 */
-  padding: 60px 20px 100px; /* 底部留白给搜索框 */
+  background: linear-gradient(135deg, #a1c4fd 0%, #c2e9fb 100%);
+  padding: 60px 20px 100px;
   text-align: center;
   position: relative;
 }
@@ -157,12 +254,12 @@ onMounted(() => {
   margin: 0 auto;
   background: white;
   padding: 10px;
-  border-radius: 50px; /* 圆角 */
+  border-radius: 50px;
   box-shadow: 0 8px 30px rgba(0,0,0,0.1);
 }
 
 .custom-search-input :deep(.el-input__wrapper) {
-  box-shadow: none; /* 去掉默认边框 */
+  box-shadow: none;
 }
 
 .search-actions {
@@ -174,7 +271,7 @@ onMounted(() => {
 /* 内容区域 */
 .content-section {
   max-width: 1200px;
-  margin: -60px auto 0; /* 向上重叠 Banner */
+  margin: -60px auto 0;
   padding: 0 20px;
   position: relative;
   z-index: 10;
@@ -190,5 +287,89 @@ onMounted(() => {
 
 .empty-state {
   padding: 50px 0;
+}
+
+/* 卡片样式 */
+.item-card {
+  margin-bottom: 20px;
+  border: none;
+  transition: transform 0.2s, box-shadow 0.2s;
+  cursor: pointer;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.item-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+}
+
+.image-wrapper {
+  position: relative;
+  width: 100%;
+  height: 200px;
+  background-color: #f5f7fa;
+}
+
+.card-image {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.image-error {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+  color: #c0c4cc;
+  font-size: 30px;
+}
+
+.category-tag {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background-color: rgba(0, 0, 0, 0.6);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.card-content {
+  padding: 14px;
+}
+
+.item-desc {
+  margin: 0 0 10px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #303133;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.info-row {
+  display: flex;
+  align-items: center;
+  color: #606266;
+  font-size: 13px;
+  margin-bottom: 6px;
+  gap: 5px;
+}
+
+.contact-row {
+  color: #409eff;
+}
+
+.time-row {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #909399;
+  text-align: right;
+  border-top: 1px solid #ebeef5;
+  padding-top: 10px;
 }
 </style>
